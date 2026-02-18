@@ -44,6 +44,7 @@ class DataStorage:
                     'timestamp_raw': post.timestamp_raw,
                     'likes': post.likes,
                     'comments_count': post.comments_count,
+                    'total_comments_count': post.total_comments_count,
                     'post_type': post.post_type,
                     'media_urls': post.media_urls,
                     'hashtags': post.hashtags,
@@ -94,6 +95,7 @@ class DataStorage:
                     timestamp_raw TEXT,
                     likes INTEGER,
                     comments_count INTEGER,
+                    total_comments_count INTEGER,
                     post_type TEXT,
                     media_urls TEXT,
                     hashtags TEXT,
@@ -120,7 +122,7 @@ class DataStorage:
             # Posts einfügen
             for post in posts:
                 cursor.execute('''
-                    INSERT OR REPLACE INTO posts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO posts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     post.post_id,
                     post.author,
@@ -132,6 +134,7 @@ class DataStorage:
                     post.timestamp_raw,
                     post.likes,
                     post.comments_count,
+                    post.total_comments_count,
                     post.post_type,
                     json.dumps(post.media_urls),
                     json.dumps(post.hashtags),
@@ -230,6 +233,9 @@ class DataStorage:
             cursor.execute("SELECT AVG(comments_count) FROM posts")
             avg_comments = cursor.fetchone()[0] or 0
             
+            cursor.execute("SELECT SUM(total_comments_count) FROM posts")
+            all_comments = cursor.fetchone()[0] or 0
+
             # Post-Typen
             cursor.execute("SELECT post_type, COUNT(*) FROM posts GROUP BY post_type")
             post_types = dict(cursor.fetchall())
@@ -245,6 +251,7 @@ class DataStorage:
                 'total_comments': total_comments,
                 'avg_likes': avg_likes,
                 'avg_comments': avg_comments,
+                'all_comments': all_comments,
                 'post_types': post_types,
                 'top_authors': top_authors
             }

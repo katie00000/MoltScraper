@@ -28,6 +28,7 @@ class Post:
     timestamp_raw: str = ''
     likes: int = 0
     comments_count: int = 0
+    total_comments_count: int = 0
     comments: List[Comment] = field(default_factory=list)
     post_type: str = 'text'
     media_urls: List[str] = field(default_factory=list)

@@ -173,6 +173,7 @@ Beispiele:
             print("="*60)
             print(f"✅ Gesammelte Posts:       {stats['total_posts']:,}")
             print(f"💬 Gesammelte Kommentare:  {stats['total_comments']:,}")
+            print(f"ALLE Kommentare: {stats['all_comments']}")
             print(f"❤️  Durchschnittl. Likes:  {stats['avg_likes']:.1f}")
             print(f"💬 Durchschnittl. Kommentare: {stats['avg_comments']:.1f}")
             
