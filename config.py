@@ -33,7 +33,7 @@ class Config:
     # 🎯 SCRAPING LIMITS
     # ========================================
     MAX_SHUFFLES = 1     # Maximale Anzahl Shuffles
-    MAX_POSTS = 5      # Maximale Anzahl Posts (None = unbegrenzt)
+    MAX_POSTS = 20      # Maximale Anzahl Posts (None = unbegrenzt)
     SCRAPE_COMMENTS = True  # Kommentare scrapen?
     
     # ========================================

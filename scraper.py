@@ -299,17 +299,29 @@ class MoltbookScraper:
             now = datetime.now()
 
             if unit == "s":
-                return now - timedelta(seconds=amount), "seconds", f"{amount}{unit} ago"
+                dt = now - timedelta(seconds=amount)
+                dt = dt.replace(microsecond=0)
+                return dt, "seconds", f"{amount}{unit} ago"
             if unit == "m":
-                return now - timedelta(minutes=amount), "minutes", f"{amount}{unit} ago"
+                dt = now - timedelta(minutes=amount)
+                dt = dt.replace(second=0, microsecond=0)
+                return dt, "minutes", f"{amount}{unit} ago"
             if unit == "h":
-                return now - timedelta(hours=amount), "hours", f"{amount}{unit} ago"
+                dt = now - timedelta(hours=amount)
+                dt = dt.replace(minute=0,second=0, microsecond=0)
+                return dt, "hours", f"{amount}{unit} ago"
             if unit == "d":
-                return now - timedelta(days=amount), "days", f"{amount}{unit} ago"
+                dt = now - timedelta(days=amount)
+                dt = dt.replace(hour=0,minute=0,second=0, microsecond=0)
+                return dt, "days", f"{amount}{unit} ago"
             if unit == "w":
-                return now - timedelta(weeks=amount), "weeks", f"{amount}{unit} ago"
+                dt = dt.replace(day=0,hour=0,minute=0,second=0, microsecond=0)
+                dt = now - timedelta(weeks=amount)
+                return dt, "weeks", f"{amount}{unit} ago"
             if unit == "y":
-                return now - timedelta(days=amount*365), "years", f"{amount}{unit} ago"
+                dt = now - timedelta(days=amount*365)
+                dt = dt.replace(day=0,hour=0,minute=0,second=0, microsecond=0)
+                return dt, "years", f"{amount}{unit} ago"
 
             return None, "unknown", f"{amount}{unit} ago"
 
@@ -348,6 +360,7 @@ class MoltbookScraper:
     def _extract_mentions(self, text: str) -> List[str]:
         return re.findall(r"@(\w+)", text or "")
 
+
     def _parse_relative_time(self, relative_time: str) -> Tuple[Optional[datetime], str, str]:
         """
         Wandelt relative Zeitangaben (z.B. '18d ago', '5h ago') in datetime um.
@@ -357,7 +370,6 @@ class MoltbookScraper:
         now = datetime.now()
 
         try:
-            # Match für Zahl + Einheit (s, m, h, d, w, y)
             match = re.search(r"(\d+)\s*([smhdwy])", raw.lower())
             if not match:
                 return None, "unknown", raw
@@ -366,21 +378,37 @@ class MoltbookScraper:
             unit = match.group(2)
 
             if unit == "s":
-                return now - timedelta(seconds=amount), "seconds", raw
+                dt = now - timedelta(seconds=amount)
+                dt = dt.replace(microsecond=0)
+                precision = "seconds"
             elif unit == "m":
-                return now - timedelta(minutes=amount), "minutes", raw
+                dt = now - timedelta(minutes=amount)
+                dt = dt.replace(second=0, microsecond=0)
+                precision = "minutes"
             elif unit == "h":
-                return now - timedelta(hours=amount), "hours", raw
+                dt = now - timedelta(hours=amount)
+                dt = dt.replace(minute=0, second=0, microsecond=0)
+                precision = "hours"
             elif unit == "d":
-                return now - timedelta(days=amount), "days", raw
+                dt = now - timedelta(days=amount)
+                dt = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                precision = "days"
             elif unit == "w":
-                return now - timedelta(weeks=amount), "weeks", raw
+                dt = now - timedelta(weeks=amount)
+                dt = dt.replace(day=0, hour=0, minute=0, second=0, microsecond=0)
+                precision = "weeks"
             elif unit == "y":
-                return now - timedelta(days=amount*365), "years", raw
+                dt = now - timedelta(days=amount*365)
+                dt = dt.replace(day=0, hour=0, minute=0, second=0, microsecond=0)
+                precision = "years"
+            else:
+                return None, "unknown", raw
 
-            return None, "unknown", raw
+            return dt, precision, raw
+
         except Exception:
             return None, "unknown", raw
+
 
     async def _parse_comments_from_detail(self, detail_soup: BeautifulSoup) -> Tuple[List[Comment], int]:
         comments: List[Comment] = []
@@ -426,6 +454,19 @@ class MoltbookScraper:
 
             comment_id = hashlib.md5(f"{author}{content}{idx}".encode()).hexdigest()[:16]
 
+            #LIKES
+            likes = -1
+
+            likes_div = block.select_one("div[class*='items-center'][class*='gap-1']")
+
+            if likes_div:
+                likes_span = likes_div.select_one("span.flex.items-center.gap-1")
+                if likes_span:
+                    number_text = ''.join(likes_span.find_all(text=True, recursive=False)).strip()
+                    if number_text.isdigit():
+                        likes = int(number_text)
+
+
             comments.append(Comment(
                 comment_id=comment_id,
                 author=author,
@@ -433,7 +474,7 @@ class MoltbookScraper:
                 timestamp=timestamp,
                 timestamp_precision=precision,
                 timestamp_raw=parsed_raw_time,
-                likes=0
+                likes=likes
             ))
 
         print(f"\n=== DEBUG: PARSED COMMENTS = {len(comments)} ===")
@@ -509,7 +550,14 @@ class MoltbookScraper:
         time_letter = post_data.get("time_letter")
         timestamp, precision, timestamp_raw = self._extract_timestamp(time_number, time_letter)
 
-        print("FETCHING ", url)
+        
+        if url in FETCHED_URL_CACHE:
+            print("INFO: Post schon gesehen - ", url)
+            return None
+        
+        print("Neuer Post - ", url)
+        FETCHED_URL_CACHE.add(url)
+
         html = await self._fetch_page_browser(url)
         comments: List[Comment] = []
         likes: int = 0
@@ -564,6 +612,10 @@ class MoltbookScraper:
             for i, post_data in enumerate(posts_data):
                 post = await self.parse_post_data(post_data, len(all_posts) + 1)
                 if post:
+                    if post.post_id in self.seen_posts:
+                        logger.debug(f"Duplikat-Post übersprungen: {post.post_id}")
+                        continue
+                    self.seen_posts.add(post.post_id)
                     all_posts.append(post)
 
                 if len(all_posts) >= Config.MAX_POSTS:
