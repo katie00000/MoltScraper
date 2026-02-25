@@ -18,7 +18,7 @@ async def main():
     """Hauptfunktion für Moltbook Scraping"""
     
     # ========================================
-    # 🔧 ARGUMENT PARSER
+    # ARGUMENT PARSER
     # ========================================
     parser = argparse.ArgumentParser(
         description='Moltbook Post & Comment Scraper (Selenium + Shuffle)',
@@ -29,7 +29,6 @@ Beispiele:
   python main.py --max-shuffles 100       # 100 Shuffles
   python main.py --max-posts 500          # Stoppe bei 500 Posts
   python main.py --delay 3.0              # 3 Sekunden Verzögerung
-  python main.py --export-csv             # Zusätzlich CSV exportieren
   python main.py --verbose                # Debug-Modus
         """
     )
@@ -37,7 +36,7 @@ Beispiele:
     parser.add_argument(
         '--max-shuffles',
         type=int,
-        default=Config.MAX_SHUFFLES,  # ← Korrigiert!
+        default=Config.MAX_SHUFFLES,
         help=f'Maximale Anzahl Shuffles (Standard: {Config.MAX_SHUFFLES})'
     )
     
@@ -53,12 +52,6 @@ Beispiele:
         type=float,
         default=Config.REQUEST_DELAY,
         help=f'Verzögerung zwischen Requests in Sekunden (Standard: {Config.REQUEST_DELAY})'
-    )
-    
-    parser.add_argument(
-        '--export-csv',
-        action='store_true',
-        help='Daten zusätzlich als CSV exportieren'
     )
     
     parser.add_argument(
@@ -96,128 +89,81 @@ Beispiele:
         Config.HEADLESS = args.headless
     
     # ========================================
-    # 🔧 LOGGING KONFIGURATION
+    # LOGGING KONFIGURATION
     # ========================================
     if args.verbose:
         import logging
         logging.getLogger('scraper').setLevel(logging.DEBUG)
-        logger.info("🐛 Debug-Modus aktiviert")
+        logger.info("Debug-Modus aktiviert")
     
     # ========================================
-    # 📁 AUSGABEVERZEICHNIS ERSTELLEN
+    # AUSGABEVERZEICHNIS ERSTELLEN
     # ========================================
     output_path = Path(args.output_dir)
     output_path.mkdir(exist_ok=True)
-    logger.info(f"📁 Ausgabeverzeichnis: {output_path.absolute()}")
+    logger.info(f"Ausgabeverzeichnis: {output_path.absolute()}")
     
     # ========================================
-    # 🚀 SCRAPER STARTEN
+    # SCRAPER STARTEN
     # ========================================
     logger.info("="*60)
-    logger.info("🚀 MOLTBOOK SCRAPER GESTARTET")
+    logger.info("MOLTBOOK SCRAPER GESTARTET")
     logger.info("="*60)
-    logger.info(f"🌐 Base URL: {Config.BASE_URL}")
-    logger.info(f"🔄 Max Shuffles: {Config.MAX_SHUFFLES}")
-    logger.info(f"📊 Max Posts: {Config.MAX_POSTS if Config.MAX_POSTS else 'unbegrenzt'}")
-    logger.info(f"⏱️  Verzögerung: {Config.REQUEST_DELAY}s")
-    logger.info(f"👁️  Headless: {Config.HEADLESS}")
+    logger.info(f"Base URL: {Config.BASE_URL}")
+    logger.info(f"Max Shuffles: {Config.MAX_SHUFFLES}")
+    logger.info(f"Max Posts: {Config.MAX_POSTS if Config.MAX_POSTS else 'unbegrenzt'}")
+    logger.info(f"Verzögerung: {Config.REQUEST_DELAY}s")
+    logger.info(f"Headless: {Config.HEADLESS}")
     logger.info("="*60)
     
     try:
-        # ========================================
-        # 🕷️ SCRAPING DURCHFÜHREN
-        # ========================================
         async with MoltbookScraper() as scraper:
-            # Verwende scrape_all_posts() direkt
             posts = await scraper.scrape_all_posts()
             
             if not posts:
-                logger.warning("⚠️ Keine Posts gefunden!")
-                logger.info("\n💡 Mögliche Gründe:")
-                logger.info("   • Website ist nicht erreichbar")
-                logger.info("   • HTML-Struktur hat sich geändert")
-                logger.info("   • Selektoren müssen angepasst werden")
+                logger.warning("Keine Posts gefunden!")
                 return 1
             
-            logger.info(f"\n✅ {len(posts)} Posts erfolgreich gescraped!")
+            logger.info(f"\n {len(posts)} Posts erfolgreich gescraped!")
             
             # ========================================
-            # 💾 DATEN SPEICHERN
+            # DATEN SPEICHERN IN CHROMA DB
             # ========================================
             logger.info("\n" + "="*60)
-            logger.info("💾 SPEICHERE DATEN")
+            logger.info("SPEICHERE DATEN IN CHROMA DB")
             logger.info("="*60)
             
-            storage = DataStorage()
+            storage = DataStorage(db_path=output_path / "chroma_db")
+            storage.save_posts(posts)
             
-            # JSON speichern
-            json_path = storage.save_to_json(posts)
-            logger.info(f"✅ JSON gespeichert: {json_path}")
-            
-            # SQLite speichern
-            db_path = storage.save_to_sqlite(posts)
-            logger.info(f"✅ SQLite gespeichert: {db_path}")
-            
-            # Optional: CSV exportieren
-            if args.export_csv:
-                csv_path = storage.export_to_csv()
-                logger.info(f"✅ CSV exportiert: {csv_path}")
-            
-            # ========================================
-            # 📊 STATISTIKEN ANZEIGEN
-            # ========================================
             stats = storage.get_statistics()
             
             print("\n" + "="*60)
-            print("📊 MOLTBOOK SCRAPING STATISTIKEN")
+            print("MOLTBOOK SCRAPING STATISTIKEN")
             print("="*60)
-            print(f"✅ Gesammelte Posts:       {stats['total_posts']:,}")
-            print(f"💬 Gesammelte Kommentare:  {stats['total_comments']:,}")
-            print(f"ALLE Kommentare: {stats['all_comments']}")
-            print(f"❤️  Durchschnittl. Likes:  {stats['avg_likes']:.1f}")
-            print(f"💬 Durchschnittl. Kommentare: {stats['avg_comments']:.1f}")
+            print(f"Gesammelte Posts:       {stats['total_posts']:,}")
+            print(f"Gesammelte Kommentare:  {stats['total_comments']:,}")
+            print(f"Durchschnittl. Likes:  {stats['avg_likes']:.1f}")
+            print(f"Durchschnittl. Kommentare: {stats['avg_comments']:.1f}")
             
-            # Post-Typen
             if stats.get('post_types'):
-                print(f"\n📝 Post-Typen:")
+                print(f"\nPost-Typen:")
                 for ptype, count in sorted(stats['post_types'].items(), key=lambda x: x[1], reverse=True):
                     percentage = (count / stats['total_posts'] * 100) if stats['total_posts'] > 0 else 0
                     print(f"   {ptype:10s}: {count:4d} ({percentage:5.1f}%)")
             
-            # Top Autoren
-            if stats.get('top_authors'):
-                print(f"\n👥 Top 10 Autoren:")
-                for i, (author, count) in enumerate(stats['top_authors'][:10], 1):
-                    display_name = f"u/{author}" if not author.startswith('u/') else author
-                    print(f"   {i:2d}. {display_name:20s}: {count:3d} Posts")
-            
-            # Top Hashtags
-            if stats.get('top_hashtags'):
-                print(f"\n🏷️  Top 10 Hashtags:")
-                for i, (tag, count) in enumerate(stats['top_hashtags'][:10], 1):
-                    print(f"   {i:2d}. #{tag:20s}: {count:3d}x")
-            
+            print("\nDaten erfolgreich in ChromaDB gespeichert!")
+            print(f"ChromaDB Verzeichnis: {storage.db_path}")
             print("="*60)
             
-            # ========================================
-            # 📁 DATEIPFADE ANZEIGEN
-            # ========================================
-            print(f"\n📁 Gespeicherte Dateien:")
-            print(f"   JSON:   {json_path}")
-            print(f"   SQLite: {db_path}")
-            if args.export_csv:
-                print(f"   CSV:    {csv_path}")
-            print("="*60)
-            
-            logger.info("\n✅ Scraping erfolgreich abgeschlossen!")
             return 0
             
     except KeyboardInterrupt:
-        logger.warning("\n⚠️ Scraping durch Benutzer abgebrochen (Ctrl+C)")
+        logger.warning("\nScraping durch Benutzer abgebrochen (Ctrl+C)")
         return 130
         
     except Exception as e:
-        logger.error(f"\n❌ Kritischer Fehler: {e}")
+        logger.error(f"\nKritischer Fehler: {e}")
         import traceback
         logger.error(traceback.format_exc())
         return 1
@@ -228,7 +174,7 @@ def run():
         exit_code = asyncio.run(main())
         sys.exit(exit_code)
     except KeyboardInterrupt:
-        print("\n⚠️ Programm abgebrochen")
+        print("\nProgramm abgebrochen")
         sys.exit(130)
 
 if __name__ == '__main__':

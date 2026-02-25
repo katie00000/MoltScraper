@@ -20,6 +20,7 @@ class Post:
     """Post-Modell mit separatem Titel"""
     post_id: str
     author: str
+    submolt: str = ''
     title: str = ''  # ← NEU: Separates Titel-Feld
     content: str = ''
     author_id: str = ''

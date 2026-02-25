@@ -174,17 +174,70 @@ class MoltbookScraper:
 
     async def load_moltbook(self):
         """
-        Öffnet die Startseite von Moltbook.
+        Öffnet die Startseite von Moltbook und wartet robust
+        bis Posts wirklich im DOM vorhanden sind (max. 10s).
+        Behandelt DNS-Fehler, Timeouts und dynamische Inhalte.
         """
         if not self.page:
             raise RuntimeError("Browser nicht initialisiert")
 
-        await self.page.goto(
-            Config.BASE_URL,
-            wait_until="domcontentloaded",
-            timeout=30000,
-        )
-        await asyncio.sleep(jitter(1.5))
+        logger.info("Lade Moltbook Startseite...")
+
+        from playwright._impl._errors import Error as PlaywrightError, TimeoutError
+
+        # --- 1) Seite mit Retry auf DNS-Probleme laden ---
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await self.page.goto(
+                    Config.BASE_URL,
+                    wait_until="domcontentloaded",  # robuster als networkidle
+                    timeout=30_000  # 30 Sekunden
+                )
+                break
+            except PlaywrightError as e:
+                if "net::ERR_NAME_NOT_RESOLVED" in str(e):
+                    logger.warning(f"DNS-Fehler beim Laden der Seite (Versuch {attempt+1}/{max_retries})")
+                    await asyncio.sleep(2)
+                else:
+                    raise
+        else:
+            logger.error("Seite konnte nach mehreren Versuchen nicht geladen werden")
+            return
+
+        # --- 2) Auf bekannte Post-Struktur warten ---
+        try:
+            await self.page.wait_for_selector(
+                Config.POST_SELECTOR,
+                state="visible",
+                timeout=10_000,
+            )
+            logger.debug("Post-Selector sichtbar")
+            return
+        except TimeoutError:
+            logger.warning("Post-Selector nicht rechtzeitig sichtbar – Fallback-Polling")
+
+        # --- 3) Fallback: Polling über HTML ---
+        await self._wait_for_posts()
+
+    async def _wait_for_posts(self, timeout: float = 10.0, interval: float = 0.5):
+        """
+        Polling auf DOM-Elemente für Posts.
+        Prüft alle `interval` Sekunden bis `timeout` Sekunden.
+        """
+        start = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - start < timeout:
+            html = await self.page.content()
+            soup = BeautifulSoup(html, "html.parser")
+
+            # bekannte Post-Klasse prüfen
+            if soup.find("div", class_="animate-fadeIn"):
+                logger.debug("Posts via Fallback-Polling erkannt")
+                return
+
+            await asyncio.sleep(interval)
+
+        logger.error(f"Nach {timeout} Sekunden keine Posts gefunden")
 
     async def get_current_posts(self) -> List[Dict[str, str]]:
         """
@@ -210,7 +263,7 @@ class MoltbookScraper:
             text = text_tag.get_text(strip=True, separator=" ") if text_tag else ""
 
             url = self._extract_post_url(div)
-            author, time_number, time_letter = self._extract_user_and_relative_time(div)
+            submolt, author, time_number, time_letter = self.extract_post_metadata(div)
 
             comment_count = None
             for span in div.find_all("span"):
@@ -225,6 +278,7 @@ class MoltbookScraper:
                 "text": text,
                 "url": url or "",
                 "author": author,
+                "submolt": submolt,
                 "time_number": time_number,
                 "time_letter": time_letter,
                 "comment_count": comment_count
@@ -236,37 +290,50 @@ class MoltbookScraper:
     # HILFSMETHODEN ZUR DATENEXTRAKTION
     # ============================================================
 
-    def _extract_user_and_relative_time(
+    def extract_post_metadata(
         self, post_soup: BeautifulSoup
-    ) -> Tuple[str, Optional[str], Optional[str]]:
+    ) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
         """
-        Extrahiert Username sowie relative Zeitangabe
-        (z. B. '19d ago' -> 19, d).
+        Extrahiert:
+        - SubMolt / Subforum (z.B. 'm/general')
+        - Username (z.B. 'u/easymoneysniper')
+        - Relative Zeitangabe (z. B. '19d ago' -> 19, d)
         """
         try:
             info_div = post_soup.find("div", class_="flex-1 min-w-0")
             if not info_div:
-                return "Unknown", None, None
+                return None, "Unknown", None, None
 
+            submolt = None
             username = "Unknown"
             time_number = None
             time_letter = None
 
+            # Alle Links im info_div
+            links = info_div.find_all("a")
+            if links:
+                # SubMolt: erster Link
+                submolt = links[0].get_text(strip=True)
+                # Username: zweiter Link (falls vorhanden)
+                if len(links) > 1:
+                    username = links[1].get_text(strip=True)
+                    if username.startswith("u/"):
+                        username = username[2:]
+
+            # Zeitangabe: letztes span mit 'ago'
             for span in info_div.find_all("span"):
                 text = span.get_text(strip=True)
-
-                if "u/" in text:
-                    username = text
-
                 if "ago" in text.lower():
                     parts = text.split()
                     if parts:
                         time_number = "".join(filter(str.isdigit, parts[0]))
                         time_letter = "".join(filter(str.isalpha, parts[0]))
+                    break
 
-            return username, time_number, time_letter
+            return submolt, username, time_number, time_letter
+
         except Exception:
-            return "Unknown", None, None
+            return None, "Unknown", None, None
 
     def _extract_post_url(self, soup: BeautifulSoup) -> Optional[str]:
         """
@@ -457,14 +524,13 @@ class MoltbookScraper:
             #LIKES
             likes = -1
 
-            likes_div = block.select_one("div[class*='items-center'][class*='gap-1']")
-
-            if likes_div:
-                likes_span = likes_div.select_one("span.flex.items-center.gap-1")
-                if likes_span:
-                    number_text = ''.join(likes_span.find_all(text=True, recursive=False)).strip()
-                    if number_text.isdigit():
-                        likes = int(number_text)
+            likes_span = block.select_one("span.flex.items-center.gap-1")
+            if likes_span:
+                # Alle Zahlen im Text extrahieren
+                text = likes_span.get_text(strip=True)
+                match = re.search(r"\d+", text)
+                if match:
+                    likes = int(match.group())
 
 
             comments.append(Comment(
@@ -514,17 +580,18 @@ class MoltbookScraper:
 
     def _generate_post_id(
         self,
+        submolt: str,
         author: str,
         timestamp: Optional[datetime],
         title: str,
         content: str,
         url: str,
     ) -> str:
-        base = f"{author}{timestamp}{title}{content[:80]}{url}"
+        base = f"{author}{submolt}{timestamp}{title}{content[:80]}{url}"
         return hashlib.md5(base.encode()).hexdigest()[:16]
 
 
-    async def wait_for_posts(self, timeout=5.0):
+    async def wait_for_posts(self, timeout=60.0):
         start = asyncio.get_event_loop().time()
         while asyncio.get_event_loop().time() - start < timeout:
             posts = await self.get_current_posts()
@@ -541,6 +608,7 @@ class MoltbookScraper:
         title = post_data.get("title", "")
         content = post_data.get("text", "")
         url = post_data.get("url", "")
+        submolt = post_data.get("submolt", "")
         author = post_data.get("author", "Unknown")
         if not title and not content:
             return None
@@ -568,12 +636,13 @@ class MoltbookScraper:
         else:
             comments_count = 0
 
-        post_id = self._generate_post_id(author, timestamp, title, content, url)
+        post_id = self._generate_post_id(author, submolt, timestamp, title, content, url)
 
         return Post(
             post_id=post_id,
             author=author or "Unknown",
             author_id=post_data.get("author_id", ""),
+            submolt = submolt,
             title=title,
             content=content,
             timestamp=timestamp or datetime.now(),
